@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>物流管理后台</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px; }
+  input { padding: 8px; width: 100%; box-sizing: border-box; margin: 6px 0; font-size: 14px; }
+  button { padding: 8px 16px; cursor: pointer; }
+  fieldset { border: 1px solid #ddd; border-radius: 8px; margin: 16px 0; }
+  legend { padding: 0 8px; font-weight: bold; }
+  .msg { margin-left: 10px; color: #2e7d32; }
+</style>
+</head>
+<body>
+<h2>🛠 物流管理</h2>
+
+<fieldset>
+  <legend>管理密码</legend>
+  <input id="token" placeholder="输入管理密码（ADMIN_TOKEN）" />
+  <button onclick="saveToken()">保存</button>
+  <span id="tokenMsg" class="msg"></span>
+</fieldset>
+
+<fieldset>
+  <legend>1. 新建 / 更新运单</legend>
+  <input id="o_no" placeholder="运单号，如 SF1234567890" />
+  <input id="o_company" placeholder="快递公司，如 顺丰" />
+  <input id="o_status" placeholder="当前状态，如 运输中" />
+  <button onclick="createOrder()">保存运单</button>
+</fieldset>
+
+<fieldset>
+  <legend>2. 追加物流节点</legend>
+  <input id="t_no" placeholder="运单号" />
+  <input id="t_time" placeholder="时间，如 2026-10-19 10:30（留空用当前时间）" />
+  <input id="t_info" placeholder="物流描述，如 快件已到达东莞分拣中心" />
+  <input id="t_status" placeholder="更新状态（可选），如 派送中" />
+  <button onclick="addTrack()">追加物流</button>
+  <span id="msg" class="msg"></span>
+</fieldset>
+
+<script>
+function saveToken() {
+  localStorage.setItem('admin_token', document.getElementById('token').value.trim());
+  document.getElementById('tokenMsg').textContent = '已保存';
+}
+
+document.getElementById('token').value = localStorage.getItem('admin_token') || '';
+
+function headers() {
+  return {
+    'Content-Type': 'application/json',
+    'x-admin-token': localStorage.getItem('admin_token') || ''
+  };
+}
+
+async function createOrder() {
+  const body = {
+    tracking_no: document.getElementById('o_no').value.trim(),
+    company: document.getElementById('o_company').value.trim(),
+    status: document.getElementById('o_status').value.trim()
+  };
+  const res = await fetch('/api/admin/order', {
+    method: 'POST', headers: headers(), body: JSON.stringify(body)
+  });
+  alert(res.ok ? '保存成功' : '失败：' + (await res.text()));
+}
+
+async function addTrack() {
+  const time = document.getElementById('t_time').value.trim()
+    || new Date().toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-');
+  const body = {
+    tracking_no: document.getElementById('t_no').value.trim(),
+    time,
+    info: document.getElementById('t_info').value.trim(),
+    status: document.getElementById('t_status').value.trim()
+  };
+  const res = await fetch('/api/admin/track', {
+    method: 'POST', headers: headers(), body: JSON.stringify(body)
+  });
+  const m = document.getElementById('msg');
+  m.textContent = res.ok ? '已追加' : '失败，请检查密码';
+  if (res.ok) document.getElementById('t_info').value = '';
+}
+</script>
+</body>
+</html>
