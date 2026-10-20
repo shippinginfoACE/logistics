@@ -1,8 +1,5 @@
-console.log('>>> server.js 开始加载');
-
 const express = require('express');
-const db = require('./db');
-console.log('db类型:',typeof db,'有prepare吗:',typeof db.prepare)
+const pool = require('./db');
 
 const app = express();
 app.use(express.json());
@@ -18,60 +15,79 @@ function auth(req, res, next) {
   next();
 }
 
-app.get('/api/track/:no', (req, res) => {
-  const no = req.params.no.trim();
-  const order = db.prepare('SELECT * FROM orders WHERE tracking_no = ?').get(no);
-  if (!order) return res.status(404).json({ error: '未找到该运单' });
+// 用户查询
+app.get('/api/track/:no', async (req, res) => {
+  try {
+    const no = req.params.no.trim();
+    const orderRes = await pool.query('SELECT * FROM orders WHERE tracking_no = $1', [no]);
+    const order = orderRes.rows[0];
+    if (!order) return res.status(404).json({ error: '未找到该运单' });
 
-  const tracks = db.prepare(
-    'SELECT time, info FROM tracks WHERE tracking_no = ? ORDER BY time DESC'
-  ).all(no);
+    const tracksRes = await pool.query(
+      'SELECT time, info FROM tracks WHERE tracking_no = $1 ORDER BY time DESC',
+      [no]
+    );
 
-  res.json({ order, tracks });
-});
-
-app.post('/api/admin/order', auth, (req, res) => {
-  const { tracking_no, company, status } = req.body;
-  if (!tracking_no) return res.status(400).json({ error: '缺少运单号' });
-
-  db.prepare(`
-    INSERT INTO orders (tracking_no, company, status, updated_at)
-    VALUES (?, ?, ?, ?)
-    ON CONFLICT(tracking_no) DO UPDATE SET
-      company = excluded.company,
-      status = excluded.status,
-      updated_at = excluded.updated_at
-  `).run(tracking_no, company || '', status || '', new Date().toISOString());
-
-  res.json({ ok: true });
-});
-
-app.post('/api/admin/track', auth, (req, res) => {
-  const { tracking_no, time, info, status } = req.body;
-  if (!tracking_no || !time || !info) {
-    return res.status(400).json({ error: '参数不完整' });
+    res.json({ order, tracks: tracksRes.rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '服务器错误' });
   }
+});
 
-  const now = new Date().toISOString();
-  db.prepare(
-    'INSERT INTO tracks (tracking_no, time, info, created_at) VALUES (?,?,?,?)'
-  ).run(tracking_no, time, info, now);
+// 管理端：新建/更新运单
+app.post('/api/admin/order', auth, async (req, res) => {
+  try {
+    const { tracking_no, company, status } = req.body;
+    if (!tracking_no) return res.status(400).json({ error: '缺少运单号' });
 
-  db.prepare(`
-    INSERT INTO orders (tracking_no, company, status, updated_at)
-    VALUES (?, '', ?, ?)
-    ON CONFLICT(tracking_no) DO UPDATE SET
-      status = excluded.status,
-      updated_at = excluded.updated_at
-  `).run(tracking_no, status || info, now);
+    await pool.query(`
+      INSERT INTO orders (tracking_no, company, status, updated_at)
+      VALUES ($1, $2, $3, $4)
+      ON CONFLICT(tracking_no) DO UPDATE SET
+        company = EXCLUDED.company,
+        status = EXCLUDED.status,
+        updated_at = EXCLUDED.updated_at
+    `, [tracking_no, company || '', status || '', new Date().toISOString()]);
 
-  res.json({ ok: true });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '服务器错误' });
+  }
+});
+
+// 管理端：追加物流
+app.post('/api/admin/track', auth, async (req, res) => {
+  try {
+    const { tracking_no, time, info, status } = req.body;
+    if (!tracking_no || !time || !info) {
+      return res.status(400).json({ error: '参数不完整' });
+    }
+
+    const now = new Date().toISOString();
+    
+    // 插入物流记录
+    await pool.query(
+      'INSERT INTO tracks (tracking_no, time, info, created_at) VALUES ($1, $2, $3, $4)',
+      [tracking_no, time, info, now]
+    );
+
+    // 更新订单状态
+    await pool.query(`
+      INSERT INTO orders (tracking_no, company, status, updated_at)
+      VALUES ($1, '', $2, $3)
+      ON CONFLICT(tracking_no) DO UPDATE SET
+        status = EXCLUDED.status,
+        updated_at = EXCLUDED.updated_at
+    `, [tracking_no, status || info, now]);
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '服务器错误' });
+  }
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`✅ 服务已启动: http://localhost:${PORT}`));
-
-// 兜底：捕获未处理的异常，强制打印
-process.on('uncaughtException', (err) => {
-  console.error('❌ 未捕获异常:', err);
-});
